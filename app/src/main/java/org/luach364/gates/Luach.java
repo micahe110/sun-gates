@@ -267,6 +267,62 @@ public final class Luach {
         return new int[]{g, before + z.day, len};
     }
 
+    // ===== הירח: מיקום בשמיים (שיטת Schlyter, דיוק של כמה דקות קשת) =====
+
+    private static double rev(double x) { return x - Math.floor(x / 360.0) * 360.0; }
+
+    /** [אורך אקליפטי, רוחב אקליפטי, מרחק ברדיוסי כדור הארץ] של הירח, וגם אורך השמש. */
+    static double[] moonEcl(double d) {
+        double N = rev(125.1228 - 0.0529538083 * d), i = 5.1454, w = rev(318.0634 + 0.1643573223 * d);
+        double a = 60.2666, e = 0.054900, M = rev(115.3654 + 13.0649929509 * d);
+        double ws = 282.9404 + 4.70935E-5 * d, Ms = rev(356.0470 + 0.9856002585 * d);
+        double E = M + e * (180 / Math.PI) * Math.sin(M * RAD) * (1 + e * Math.cos(M * RAD));
+        for (int k = 0; k < 6; k++) E = E - (E - e * (180 / Math.PI) * Math.sin(E * RAD) - M) / (1 - e * Math.cos(E * RAD));
+        double xv = a * (Math.cos(E * RAD) - e), yv = a * Math.sqrt(1 - e * e) * Math.sin(E * RAD);
+        double v = Math.atan2(yv, xv) / RAD, r = Math.sqrt(xv * xv + yv * yv);
+        double xh = r * (Math.cos(N * RAD) * Math.cos((v + w) * RAD) - Math.sin(N * RAD) * Math.sin((v + w) * RAD) * Math.cos(i * RAD));
+        double yh = r * (Math.sin(N * RAD) * Math.cos((v + w) * RAD) + Math.cos(N * RAD) * Math.sin((v + w) * RAD) * Math.cos(i * RAD));
+        double zh = r * Math.sin((v + w) * RAD) * Math.sin(i * RAD);
+        double lon = Math.atan2(yh, xh) / RAD, lat = Math.atan2(zh, Math.sqrt(xh * xh + yh * yh)) / RAD;
+        double Ls = rev(Ms + ws), Lm = rev(M + w + N), D = rev(Lm - Ls), F = rev(Lm - N);
+        lon += -1.274 * sn(M - 2 * D) + 0.658 * sn(2 * D) - 0.186 * sn(Ms) - 0.059 * sn(2 * M - 2 * D)
+                - 0.057 * sn(M - 2 * D + Ms) + 0.053 * sn(M + 2 * D) + 0.046 * sn(2 * D - Ms) + 0.041 * sn(M - Ms)
+                - 0.035 * sn(D) - 0.031 * sn(M + Ms) - 0.015 * sn(2 * F - 2 * D) + 0.011 * sn(M - 4 * D);
+        lat += -0.173 * sn(F - 2 * D) - 0.055 * sn(M - F - 2 * D) - 0.046 * sn(M + F - 2 * D) + 0.033 * sn(F + 2 * D) + 0.017 * sn(2 * M + F);
+        r += -0.58 * Math.cos((M - 2 * D) * RAD) - 0.46 * Math.cos(2 * D * RAD);
+        return new double[]{rev(lon), lat, r, Ls};
+    }
+
+    private static double sn(double deg) { return Math.sin(deg * RAD); }
+
+    /** [אזימוט, גובה נראה] של הירח מהמקום, כולל היסט (פרלקסה) ושבירה. */
+    public static double[] moonAzAlt(Instant when, double lat, double lon) {
+        double jd = when.toEpochMilli() / 86400000.0 + 2440587.5;
+        double d = jd - 2451543.5;
+        double[] m = moonEcl(d);
+        double L = m[0] * RAD, B = m[1] * RAD, r = m[2];
+        double ecl = (23.4393 - 3.563E-7 * d) * RAD;
+        double xg = Math.cos(L) * Math.cos(B), yg = Math.sin(L) * Math.cos(B), zg = Math.sin(B);
+        double ye = yg * Math.cos(ecl) - zg * Math.sin(ecl), ze = yg * Math.sin(ecl) + zg * Math.cos(ecl);
+        double ra = Math.atan2(ye, xg) / RAD, dec = Math.atan2(ze, Math.sqrt(xg * xg + ye * ye)) / RAD;
+        double ut = ((when.toEpochMilli() % 86400000L) + 86400000L) % 86400000L / 3600000.0;
+        double lst = rev(m[3] + 180 + ut * 15 + lon);
+        double ha = rev(lst - ra);
+        double sa = Math.sin(lat * RAD) * Math.sin(dec * RAD) + Math.cos(lat * RAD) * Math.cos(dec * RAD) * Math.cos(ha * RAD);
+        double alt = Math.asin(Math.max(-1, Math.min(1, sa))) / RAD;
+        double az = Math.atan2(Math.sin(ha * RAD), Math.cos(ha * RAD) * Math.sin(lat * RAD) - Math.tan(dec * RAD) * Math.cos(lat * RAD)) / RAD + 180;
+        alt -= Math.asin(1 / r) / RAD * Math.cos(alt * RAD);                 // פרלקסה: הירח נראה נמוך יותר
+        if (alt > -1) alt += 1.02 / Math.tan((alt + 10.3 / (alt + 5.11)) * RAD) / 60;
+        return new double[]{rev(az), alt};
+    }
+
+    /** זווית בין הירח לשמש לאורך האקליפטיקה (0 = מולד, 180 = מילוא). */
+    public static double moonElongation(Instant when) {
+        double jd = when.toEpochMilli() / 86400000.0 + 2440587.5;
+        double[] m = moonEcl(jd - 2451543.5);
+        return rev(m[0] - m[3]);
+    }
+
     public static String hhmm(ZonedDateTime t) {
         return t.getHour() + ":" + String.format("%02d", t.getMinute());
     }

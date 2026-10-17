@@ -187,6 +187,8 @@ public class SunGatesActivity extends Activity implements SensorEventListener {
     final Runnable ticker = new Runnable() {
         @Override public void run() {
             if (model != null && !model.today.equals(LocalDate.now())) model = GatesModel.build(LocalDate.now(), lat, lon);
+            if (model != null && System.currentTimeMillis() - model.pathsAt > 5 * 60_000L)
+                model.refreshPaths(Instant.now(), java.time.ZoneId.systemDefault());
             updateInfo();
             overlay.invalidate();
             ui.postDelayed(this, 1000);
@@ -198,9 +200,12 @@ public class SunGatesActivity extends Activity implements SensorEventListener {
         double[] sun = model.sunNow(Instant.now());
         double[] pt = GatesOverlay.pointing(pose);
         String dir = model.northbound ? "השמש נעה צפונה" : "השמש נעה דרומה";
+        String moonTxt = model.moonRise == null ? "" : String.format("   |   ירח: זריחה %d:%02d · שקיעה %d:%02d",
+                model.moonRise.getHour(), model.moonRise.getMinute(), model.moonSet.getHour(), model.moonSet.getMinute());
         info.setText(bibTitle(model.z) + "\n"
                 + "שער " + model.gate + " · יום " + model.dayInGate + " מתוך " + model.gateLen + " · " + dir + "\n"
-                + String.format("השמש: אזימוט %.0f° · גובה %.0f°   |   המצלמה: %.0f° · %.0f°", sun[0], sun[1], pt[0], pt[1]));
+                + String.format("השמש: אזימוט %.0f° · גובה %.0f°   |   המצלמה: %.0f° · %.0f°", sun[0], sun[1], pt[0], pt[1])
+                + moonTxt);
     }
 
     static String bibTitle(Luach.Z z) {

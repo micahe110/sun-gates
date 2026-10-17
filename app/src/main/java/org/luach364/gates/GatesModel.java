@@ -2,6 +2,10 @@ package org.luach364.gates;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * הנתונים של "שערי השמש" (חנוך עב) — Java טהור.
@@ -21,6 +25,10 @@ public final class GatesModel {
     /** שנתות המעבר השני (חלשות). */
     public double[] otherRise = new double[7], otherSet = new double[7];
     public double todayRiseAz, todaySetAz;
+    /** מסלולי היום: נקודות [אזימוט, גובה] מהזריחה עד השקיעה בלבד. */
+    public List<double[]> sunPath = new ArrayList<>(), moonPath = new ArrayList<>();
+    public ZonedDateTime moonRise, moonSet;
+    public long pathsAt = 0;
     public int currentBand = -1;
 
     static final int[] NORTH = {10, 11, 12, 1, 2, 3, 4};     // חורף → קיץ
@@ -75,4 +83,56 @@ public final class GatesModel {
     }
 
     public double[] sunNow(Instant t) { return Luach.sunAzAlt(t, lat, lon); }
+
+    public double[] moonNow(Instant t) { return Luach.moonAzAlt(t, lat, lon); }
+
+    static final double HORIZON = -0.27;      // הקצה העליון של הדיסק נוגע באופק
+    static final long STEP = 4 * 60_000L;     // דגימה כל 4 דקות
+
+    /** מחשב מחדש את מסלולי השמש והירח (פעם בכמה דקות). */
+    public void refreshPaths(Instant now, ZoneId zone) {
+        pathsAt = now.toEpochMilli();
+        // ---- השמש: היום (או מחר, אם כבר שקעה) ----
+        LocalDate d = now.atZone(zone).toLocalDate();
+        if (!now.isBefore(Luach.sunTime(d, lat, lon, false, zone).toInstant())) d = d.plusDays(1);
+        Instant rise = Luach.sunTime(d, lat, lon, true, zone).toInstant();
+        Instant set = Luach.sunTime(d, lat, lon, false, zone).toInstant();
+        List<double[]> sp = new ArrayList<>();
+        for (long t = rise.toEpochMilli(); t < set.toEpochMilli(); t += STEP) sp.add(Luach.sunAzAlt(Instant.ofEpochMilli(t), lat, lon));
+        sp.add(Luach.sunAzAlt(set, lat, lon));
+        sunPath = sp;
+
+        // ---- הירח: המעבר הנוכחי מעל האופק, ואם הוא מתחת — המעבר הבא ----
+        long t0 = now.toEpochMilli() - 26 * 3600_000L, t1 = now.toEpochMilli() + 30 * 3600_000L;
+        long segStart = -1, chosenStart = -1, chosenEnd = -1;
+        double prevAlt = Double.NaN; long prevT = 0;
+        for (long t = t0; t <= t1; t += STEP) {
+            double alt = Luach.moonAzAlt(Instant.ofEpochMilli(t), lat, lon)[1];
+            if (!Double.isNaN(prevAlt)) {
+                boolean wasUp = prevAlt >= HORIZON, isUp = alt >= HORIZON;
+                if (!wasUp && isUp) segStart = cross(prevT, prevAlt, t, alt);
+                if (wasUp && !isUp && segStart > 0) {
+                    long segEnd = cross(prevT, prevAlt, t, alt);
+                    if (segEnd > now.toEpochMilli()) { chosenStart = segStart; chosenEnd = segEnd; break; }
+                    segStart = -1;
+                }
+            }
+            prevAlt = alt; prevT = t;
+        }
+        List<double[]> mp = new ArrayList<>();
+        moonRise = moonSet = null;
+        if (chosenStart > 0) {
+            for (long t = chosenStart; t < chosenEnd; t += STEP) mp.add(Luach.moonAzAlt(Instant.ofEpochMilli(t), lat, lon));
+            mp.add(Luach.moonAzAlt(Instant.ofEpochMilli(chosenEnd), lat, lon));
+            moonRise = Instant.ofEpochMilli(chosenStart).atZone(zone);
+            moonSet = Instant.ofEpochMilli(chosenEnd).atZone(zone);
+        }
+        moonPath = mp;
+    }
+
+    /** הזמן שבו הגובה חוצה את האופק בין שתי דגימות (אינטרפולציה). */
+    private static long cross(long ta, double aa, long tb, double ab) {
+        double f = (HORIZON - aa) / (ab - aa);
+        return ta + (long) ((tb - ta) * Math.max(0, Math.min(1, f)));
+    }
 }

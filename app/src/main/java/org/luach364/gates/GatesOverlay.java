@@ -25,7 +25,8 @@ public final class GatesOverlay {
     }
 
     static final int GOLD = 0xFFE9B949, GOLD_SOFT = 0x99E9B949, BLUE = 0xFF7FC4F2, WHITE = 0xFFFFFFFF,
-            SHADOW = 0xAA000000, HILITE = 0x40F2C14E, SUN = 0xFFFFD54F, TODAY = 0xFFFF8A50;
+            SHADOW = 0xAA000000, HILITE = 0x40F2C14E, SUN = 0xFFFFD54F, TODAY = 0xFFFF8A50,
+            SUN_PATH = 0xFFE9B949, MOON_PATH = 0xFFB4B8BE;
 
     /** [x, y] במסך, או null אם הכיוון מאחורי המצלמה. */
     public static float[] project(double azTrue, double alt, Pose p, int W, int H) {
@@ -60,6 +61,24 @@ public final class GatesOverlay {
         // ---- הסרגלים: מזרח (זריחה) ומערב (שקיעה) ----
         drawRuler(c, m, p, W, H, u, m.riseTicks, m.otherRise, m.todayRiseAz, "מזרח · זריחה");
         drawRuler(c, m, p, W, H, u, m.setTicks, m.otherSet, m.todaySetAz, "מערב · שקיעה");
+
+        // ---- מסלולי היום: השמש (זהב) והירח (אפור), מהזריחה עד השקיעה בלבד ----
+        Paint path = new Paint(Paint.ANTI_ALIAS_FLAG);
+        path.setStyle(Paint.Style.STROKE); path.setStrokeCap(Paint.Cap.ROUND); path.setStrokeJoin(Paint.Join.ROUND);
+        path.setStrokeWidth(2f * u);
+        path.setColor(MOON_PATH); trace(c, path, m.moonPath, p, W, H);
+        path.setColor(SUN_PATH);  trace(c, path, m.sunPath, p, W, H);
+
+        // ---- הירח (עכשיו) ----
+        double[] moon = m.moonNow(java.time.Instant.now());
+        float[] mq = project(moon[0], moon[1], p, W, H);
+        if (mq != null) {
+            Paint mp = new Paint(Paint.ANTI_ALIAS_FLAG);
+            mp.setStyle(Paint.Style.STROKE); mp.setColor(MOON_PATH); mp.setStrokeWidth(2.5f * u);
+            float r = Math.max(16 * u, (float) (p.f * Math.tan(Math.toRadians(0.6))));
+            c.drawCircle(mq[0], mq[1], r, mp);
+            label(c, moon[1] < 0 ? "הירח (מתחת לאופק)" : "הירח", mq[0], mq[1] + r + 26 * u, 28 * u, MOON_PATH, u);
+        }
 
         // ---- השמש (מחושבת) ----
         if (sun != null) {
@@ -156,6 +175,19 @@ public final class GatesOverlay {
     private static void seg(Canvas c, Paint pt, Pose p, int W, int H, double az1, double alt1, double az2, double alt2) {
         float[] a = project(az1, alt1, p, W, H), b = project(az2, alt2, p, W, H);
         if (a != null && b != null) c.drawLine(a[0], a[1], b[0], b[1], pt);
+    }
+
+    /** קו דרך רשימת נקודות [אזימוט, גובה]. */
+    private static void trace(Canvas c, Paint pt, java.util.List<double[]> pts, Pose p, int W, int H) {
+        if (pts == null || pts.size() < 2) return;
+        Path path = new Path();
+        boolean pen = false;
+        for (double[] q : pts) {
+            float[] s = project(q[0], q[1], p, W, H);
+            if (s == null || Math.abs(s[0]) > 4 * W || Math.abs(s[1]) > 4 * H) { pen = false; continue; }
+            if (!pen) { path.moveTo(s[0], s[1]); pen = true; } else path.lineTo(s[0], s[1]);
+        }
+        c.drawPath(path, pt);
     }
 
     /** קו לאורך אזימוטים (בגובה קבוע או משתנה), מנותק כשהנקודה מאחורי המצלמה. */
